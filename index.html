@@ -2008,8 +2008,8 @@ const isHeic=f=>/^image\/hei[cf]/i.test(f.type||'')||/\.(heic|heif)$/i.test(f.na
 const WEB_IMAGE=/^image\/(jpeg|png|webp|gif|svg\+xml)$/i;
 let heicLib=null;
 function loadHeicLib(){return heicLib||(heicLib=new Promise((res,rej)=>{const s=document.createElement('script');
-  s.src='https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
-  s.onload=()=>window.heic2any?res(window.heic2any):rej(new Error('Couldn’t convert this iPhone photo. Try saving it as JPEG first.'));
+  s.src='https://cdn.jsdelivr.net/npm/heic-to@1/dist/iife/heic-to.js';   // handles newer iPhone HDR photos
+  s.onload=()=>window.HeicTo?res(window.HeicTo):rej(new Error('Couldn’t convert this iPhone photo. Try saving it as JPEG first.'));
   s.onerror=()=>{heicLib=null;rej(new Error('Couldn’t load the photo converter. Check your connection and try again.'))};document.head.appendChild(s)}))}
 async function toViewableImage(file){
   if(WEB_IMAGE.test(file.type||'')&&!isHeic(file))return file;
@@ -2017,7 +2017,7 @@ async function toViewableImage(file){
   try{const bmp=await createImageBitmap(file),cv=document.createElement('canvas');cv.width=bmp.width;cv.height=bmp.height;   // whatever this browser can decode
     const g=cv.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,cv.width,cv.height);g.drawImage(bmp,0,0);
     const b=await new Promise(r=>cv.toBlob(r,'image/jpeg',.88));if(b)return asJpeg(b)}catch(e){}
-  if(isHeic(file)){const out=await (await loadHeicLib())({blob:file,toType:'image/jpeg',quality:.88});return asJpeg(Array.isArray(out)?out[0]:out)}
+  if(isHeic(file))return asJpeg(await (await loadHeicLib())({blob:file,type:'image/jpeg',quality:.88}));
   throw new Error('This photo’s format can’t be shown in most browsers. Save it as JPEG or PNG and upload it again.');
 }
 function shrinkBlob(file,max,q){
