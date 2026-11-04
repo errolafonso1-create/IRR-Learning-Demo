@@ -2003,6 +2003,23 @@ function renderBlocks(bs){
     case'hr':return'<hr>';
   }return''}).join('');
 }
+/* Photos in formats most browsers can't show (iPhone HEIC/HEIF, JPEG XL, AVIF, TIFF…) are converted to JPEG before uploading */
+const isHeic=f=>/^image\/hei[cf]/i.test(f.type||'')||/\.(heic|heif)$/i.test(f.name||'');
+const WEB_IMAGE=/^image\/(jpeg|png|webp|gif|svg\+xml)$/i;
+let heicLib=null;
+function loadHeicLib(){return heicLib||(heicLib=new Promise((res,rej)=>{const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js';
+  s.onload=()=>window.heic2any?res(window.heic2any):rej(new Error('Couldn’t convert this iPhone photo. Try saving it as JPEG first.'));
+  s.onerror=()=>{heicLib=null;rej(new Error('Couldn’t load the photo converter. Check your connection and try again.'))};document.head.appendChild(s)}))}
+async function toViewableImage(file){
+  if(WEB_IMAGE.test(file.type||'')&&!isHeic(file))return file;
+  const asJpeg=b=>new File([b],(file.name||'photo').replace(/\.[^.]+$/,'')+'.jpg',{type:'image/jpeg'});
+  try{const bmp=await createImageBitmap(file),cv=document.createElement('canvas');cv.width=bmp.width;cv.height=bmp.height;   // whatever this browser can decode
+    const g=cv.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,cv.width,cv.height);g.drawImage(bmp,0,0);
+    const b=await new Promise(r=>cv.toBlob(r,'image/jpeg',.88));if(b)return asJpeg(b)}catch(e){}
+  if(isHeic(file)){const out=await (await loadHeicLib())({blob:file,toType:'image/jpeg',quality:.88});return asJpeg(Array.isArray(out)?out[0]:out)}
+  throw new Error('This photo’s format can’t be shown in most browsers. Save it as JPEG or PNG and upload it again.');
+}
 function shrinkBlob(file,max,q){
   if(!/^image\/(jpeg|png|webp)$/.test(file.type)||file.size<400*1024)return Promise.resolve(file);
   return new Promise((res)=>{const url=URL.createObjectURL(file),im=new Image();
@@ -2071,9 +2088,9 @@ function edBlock(b,i){
     case'quote':inner=`<div class="ce quote" contenteditable="true" data-f="html" data-ph="A quote or a tip to highlight">${cleanHtml(b.html)}</div>`;break;
     case'ul':case'ol':inner=`<${b.t} class="ce list" contenteditable="true" data-f="items">${(b.items&&b.items.length?b.items:['']).map(x=>`<li>${cleanHtml(x)||'<br>'}</li>`).join('')}</${b.t}>`;break;
     case'img':inner=safeSrc(b.src)?`<figure><img src="${esc(b.src)}" alt="">${cap(b.caption)}</figure>
-        <div class="blk-row"><label class="btn btn-gray btn-sm">Replace image<input type="file" accept="image/*" hidden data-up="img" data-i="${i}"></label></div>`
+        <div class="blk-row"><label class="btn btn-gray btn-sm">Replace image<input type="file" accept="image/*,.heic,.heif" hidden data-up="img" data-i="${i}"></label></div>`
       :`<div class="drop" data-drop="img" data-i="${i}"><div class="drop-ic">▣</div><b>Add an image</b><span>Drag a photo here, or</span>
-        <label class="btn btn-primary btn-sm">Choose image<input type="file" accept="image/*" hidden data-up="img" data-i="${i}"></label></div>`;break;
+        <label class="btn btn-primary btn-sm">Choose image<input type="file" accept="image/*,.heic,.heif" hidden data-up="img" data-i="${i}"></label></div>`;break;
     case'video':inner=b.src||b.url?`<figure>${mediaEmbed(b)}${cap(b.caption)}</figure>
         <div class="blk-row"><button type="button" class="btn btn-gray btn-sm" data-act="edVidReset" data-i="${i}">Change video</button></div>`
       :`<div class="drop" data-drop="video" data-i="${i}"><div class="drop-ic">▶</div><b>Add a video</b>
@@ -2123,11 +2140,11 @@ function openIns(btn,i){
 function closeIns(){$('#insMenu')?.remove()}
 async function edUpload(file,kind,i){
   if(!file)return;const b=ed.blocks[i];if(!b)return;
-  if(kind==='img'&&!file.type.startsWith('image/'))return toast('That isn’t an image file.');
+  if(kind==='img'&&!file.type.startsWith('image/')&&!isHeic(file))return toast('That isn’t an image file.');
   if(kind==='video'&&!file.type.startsWith('video/'))return toast('That isn’t a video file.');
   edCollect();const blk=document.querySelector(`.blk[data-i="${i}"] .drop, .blk[data-i="${i}"] .blk-row`);
   if(blk)blk.insertAdjacentHTML('beforeend','<div class="uploading">Uploading…</div>');
-  try{const url=await uploadMedia(file,kind);b.src=url;if(kind==='video')b.url='';edRender();edChanged()}
+  try{if(kind==='img')file=await toViewableImage(file);const url=await uploadMedia(file,kind);b.src=url;if(kind==='video')b.url='';edRender();edChanged()}
   catch(ex){toast(ex.message);document.querySelectorAll('.uploading').forEach(x=>x.remove())}
 }
 function edKey(e){
@@ -2436,7 +2453,7 @@ function courseSheet(course,catId){
        <div class="field"><label>Category</label><select name="cat">${depts.map(dp=>`<optgroup label="${esc(dp.title)}">${cats.filter(x=>x.departmentId===dp.id).map(x=>`<option value="${x.id}" ${x.id===curCat?'selected':''}>${esc(x.title)}</option>`).join('')}</optgroup>`).join('')}</select></div></div>
        <div class="field"><label>Cover</label><div class="img-pick"><div class="img-prev" id="ip"></div>
          <div style="display:flex;flex-direction:column;gap:8px"><div class="swatches">${COLORS.map(x=>`<button type="button" class="sw" data-c="${x}" style="background:${x}"></button>`).join('')}</div>
-         <div style="display:flex;gap:6px;flex-wrap:wrap"><label class="btn btn-gray btn-sm" style="cursor:pointer">Upload image<input type="file" accept="image/*" hidden id="imgIn"></label><button type="button" class="btn btn-ghost btn-sm" id="imgClr">Remove image</button></div></div></div>
+         <div style="display:flex;gap:6px;flex-wrap:wrap"><label class="btn btn-gray btn-sm" style="cursor:pointer">Upload image<input type="file" accept="image/*,.heic,.heif" hidden id="imgIn"></label><button type="button" class="btn btn-ghost btn-sm" id="imgClr">Remove image</button></div></div></div>
          <div class="hint">Study time is calculated automatically from lesson durations.</div></div>`,
     danger:course?{label:'Delete course',fn:()=>confirmSheet('Delete course?',`“${esc(course.title)}” and all its chapters, lessons and progress will be removed.`,async()=>{await api('DELETE','courses/'+course.id);location.hash='#/';toast('Course deleted')})}:null,
     onSave:async d=>{req(d.title,'Please give the course a title.');
@@ -2446,7 +2463,8 @@ function courseSheet(course,catId){
   const prev=()=>{f.querySelector('#ip').style.cssText=coverStyle({image:img,color});f.querySelectorAll('.sw').forEach(s=>s.classList.toggle('on',s.dataset.c===color&&!img))};
   f.querySelectorAll('.sw').forEach(s=>s.onclick=()=>{color=s.dataset.c;img='';prev()});
   f.querySelector('#imgClr').onclick=()=>{img='';prev()};
-  f.querySelector('#imgIn').onchange=async e=>{const file=e.target.files[0];if(file){img=await shrink(file);prev()}};
+  f.querySelector('#imgIn').onchange=async e=>{const file=e.target.files[0];if(!file)return;
+    try{img=await shrink(await toViewableImage(file));prev()}catch(ex){toast(ex.message)}};
   prev();
 }
 function shrink(file,max=800){return new Promise(r=>{const fr=new FileReader();fr.onload=()=>{const im=new Image();im.onload=()=>{
